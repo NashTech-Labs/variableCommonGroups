@@ -40,7 +40,7 @@ resources:
 steps:
   - template: variableGroup.yml@Variables
       parameters:
-      organisation: DCTEng
+      organisation: GitHub
       projectName: GitHub
       varGroupName: 'templateCommonVariables'
       jsonInput: 'Input.json'
