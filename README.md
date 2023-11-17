@@ -62,7 +62,7 @@ resources:
       endpoint: 'GitHub'
 
 steps:
-  - template: frameWork/common/pipeline/variableGroup.yml@Variables
+  - template: variableGroup.yml@Variables
       parameters:
       organisation: GitHub
       projectName: GitHub
