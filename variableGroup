@@ -1,0 +1,101 @@
+
+parameters:
+  - name: organization
+    type: string
+    default: 'GitHub'
+    
+  - name: projectName
+    type: string
+    default: 'GitHub'
+    
+  - name: varGroupName
+    type: string
+    default: 'templateCommonVariables'
+
+  - name: jsonInput
+    type: string
+    default: 'variables.json'
+
+  - name: adoUserAccessToken
+    type: string
+    default: '$(vg.Ado.userAccessToken)'
+    
+steps:
+- script: |
+
+    PAT="${{ parameters.adoUserAccessToken }}"    
+    organization="${{ parameters.organization }}"
+    project="${{ parameters.projectName }}"
+    variableGroupName="${{ parameters.varGroupName }}"
+    
+    # Azure DevOps REST API URL to list variable groups
+    url="https://dev.azure.com/${organization}/${project}/_apis/distributedtask/variablegroups"
+
+    echo "-----------------Getting Input json Key Value Pairs--------------------"
+    input_json=$(cat ${{ parameters.jsonInput }})
+    echo $input_json | jq .
+
+    echo "-----------------Modified json Data that is accepted by API--------------------------" 
+    modified_input_json=$(echo "$input_json" | jq '. |= with_entries(.value = {"value": .value})')
+    echo $modified_input_json | jq .
+
+    # Make the API request
+    echo "--------------------Getting data of all variable groups---------------------------"
+    response=$(curl -u ":${PAT}" ${url}/?api-version=7.2-preview.2)
+    #echo $response | jq .
+
+    # Check if the variable group exists
+    if echo "$response" | jq --arg varGroupName "$variableGroupName" '.value | map(select(.name == $varGroupName)) | length > 0' | grep -q true; then
+      echo "Variable group '$variableGroupName' exists."
+      target_group_id=$(echo "$response" | jq --arg varGroupName "$variableGroupName" '.value | map(select(.name == $varGroupName)) | .[0].id')
+
+      echo "---------------------------json data of existed variable group--------------------------"
+      target_json_data=$(curl -u ":${PAT}" -X GET "${url}/${target_group_id}?api-version=7.2-preview.2")
+      echo $target_json_data | jq .
+      #updated destination vargroup data
+
+      echo "--------------------------updated json data for existed variable group-----------------------------"
+      updated_target_json=$(echo "$target_json_data" | jq --argjson input "$modified_input_json" '.variables |= (. + $input)')
+      echo $updated_target_json | jq .
+      #updating var group
+      curl -X PUT "${url}/${target_group_id}?api-version=7.2-preview.2" -u ":${PAT}" -H "Content-Type: application/json" -d "${updated_target_json}"
+      
+      echo "-----------------------existed and updated var group data--------------------------"
+      curl -u ":${PAT}" -X GET "${url}/${target_group_id}?api-version=7.2-preview.2" | jq .
+ 
+    else
+      payload='{
+        "description": "New var group",
+        "name": "'"$variableGroupName"'",
+        "providerData": "null",
+        "type": "Vsts",
+        "variables": {
+
+        },
+        "variableGroupProjectReferences": [{
+          "description": "New Var Group",
+          "name": "'"$variableGroupName"'",
+          "projectReference": {
+            "id": "$(vg.Ado.projectId)",
+            "name": "$(vg.Ado.projectName)"
+          }
+        }]
+      }'
+      echo "--------------------------updated json data for variable group which will be created-----------------------------"
+      updated_target_json=$(echo "$payload" | jq --argjson input "$modified_input_json" '.variables |= (. + $input)')
+      echo $updated_target_json | jq .
+
+      echo "---------------------Creating Var Group and Updating data in it---------------------------------------"
+      curl -X POST "${url}/?api-version=7.2-preview.2" -u ":${PAT}" -H "Content-Type: application/json" -d "${updated_target_json}"
+      
+      responseForId=$(curl -u ":${PAT}" ${url}?groupName=$variableGroupName&api-version=7.2-preview.2)
+
+      echo "------------------id of latest var group--------------------------"
+      latest_group_id=$(echo "$responseForId" | jq -r '.value[0].id')
+      echo $latest_group_id
+  
+      echo "--------------------Updated and newly created var group data----------------------"
+      curl -u ":${PAT}" -X GET "${url}/${latest_group_id}?api-version=7.2-preview.2" | jq .
+
+    fi
+  displayName: 'Updating target variable group using key value pairs coming from GitHub'  
